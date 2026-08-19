@@ -27,7 +27,8 @@ def is_ultra_premium_lead(name, activity_str):
         "cyber", "cafe", "canteen", "fast food", "stall", "tailor", "begging", 
         "religious", "pipeline", "hosiery", "utensils"
     ]
-    if any(junk in desc for junk in junk_keywords) or any(junk in name for junk in junkkeywords):
+    # FIXED THE TYPO HERE (junk_keywords)
+    if any(junk in desc for junk in junk_keywords) or any(junk in name for junk in junk_keywords):
         return False
 
     # 2. ULTRA-PREMIUM SELECTION (High Ticket Clients Only)
