@@ -1,0 +1,43 @@
+name: Premium Lead Scraper
+
+on:
+  workflow_dispatch:
+    inputs:
+      filename:
+        description: 'CSV file ka naam jo repo mein hai (e.g., gaya.csv)'
+        required: true
+        default: 'gaya.csv'
+
+jobs:
+  scrape-leads:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Google Chrome
+        run: |
+          wget -q -O google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y ./google-chrome.deb
+          google-chrome --version
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl selenium beautifulsoup4
+
+      - name: Run Advanced Filter & Scraper (Live Updates)
+        # Yahan '-u' lagaya hai real-time live terminal output ke liye
+        run: python -u scraper.py ${{ github.event.inputs.filename }}
+
+      - name: Upload Premium Leads Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Premium_Leads_With_Contacts
+          path: premium_leads_contacts.*
