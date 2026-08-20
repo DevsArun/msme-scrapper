@@ -1,4 +1,4 @@
-name: Premium Lead Scraper
+name: Ultimate MSME Tech Scraper
 
 on:
   workflow_dispatch:
@@ -7,24 +7,15 @@ on:
         description: 'CSV file ka naam (e.g., gaya.csv)'
         required: true
         default: 'gaya.csv'
-      start_row:
-        description: 'Kahan se start karein? (Pehli baar 0 rakhein)'
-        required: true
-        default: '0'
-      total_leads:
-        description: 'Ek baar mein kitne leads nikalne hain? (Safe limit: 300 - 500)'
-        required: true
-        default: '300'
 
 jobs:
-  scrape-leads:
+  scrape:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
@@ -35,16 +26,16 @@ jobs:
           sudo apt-get install -y ./google-chrome.deb
           google-chrome --version
 
-      - name: Install Python Dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pandas openpyxl selenium beautifulsoup4
 
-      - name: Run Scraper in Batches (Live Updates)
-        run: python -u scraper.py ${{ github.event.inputs.filename }} ${{ github.event.inputs.start_row }} ${{ github.event.inputs.total_leads }}
+      - name: Run Deep Scraper (Real-Time)
+        run: python -u scraper.py ${{ github.event.inputs.filename }}
 
-      - name: Upload Leads Artifact
+      - name: Upload Final Leads
         uses: actions/upload-artifact@v4
         with:
-          name: Extracted_Leads_Contacts
-          path: premium_leads_contacts.*
+          name: Fresh_Tech_Leads
+          path: fresh_tech_leads.*
