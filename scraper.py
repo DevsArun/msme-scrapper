@@ -4,53 +4,51 @@ import json
 import re
 import time
 import random
+from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
-# --- BROAD & PROFITABLE FILTER LOGIC ---
-def is_target_lead(name, activity_str):
+# ================= CONFIG & REGEX =================
+PAGE_WAIT = 4
+PHONE_RE = re.compile(r"(?:\+91[\-\s]?|0)?[6-9]\d{4}[\s\-]?\d{5}")
+EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+BAD_EMAIL_BITS = ("example.", "sentry", "wixpress", ".png", ".jpg", ".gif", "@2x", "schema.org", "godaddy", "domain.com", "google.", "gstatic")
+BAD_SITE_BITS = ("google.", "justdial", "indiamart", "facebook.", "instagram.", "linkedin.", "zaubacorp", "tofler", "sulekha", "youtube.", "wikipedia", "tradeindia", "udyam", "gov.in", "maps.")
+
+# ================= FILTERS =================
+
+def is_high_potential_tech_lead(name, activity_str):
+    """Sirf unko select karega jo App ya Website banwa sakte hain"""
     name = str(name).lower() if pd.notna(name) else ""
     try:
-        if pd.isna(activity_str):
-            desc = ""
-        else:
-            activities = json.loads(activity_str)
-            desc = " ".join([act.get('Description', '').lower() for act in activities])
+        activities = json.loads(activity_str) if pd.notna(activity_str) else []
+        desc = " ".join([act.get('Description', '').lower() for act in activities])
     except:
         desc = str(activity_str).lower()
 
-    # STRICT JUNK REJECTION
-    junk_keywords = [
-        "household", "cleaning", "dusting", "repair of", "maintenance", 
-        "retail sale of food", "cereals", "pulses", "grocery", "general store",
-        "kirana", "dairy", "poultry", "meat", "fish", "spices", "sweet", "bakery",
-        "canteen", "fast food", "stall", "tailor", "begging", 
-        "religious", "pipeline", "utensils", "pan", "bidi"
-    ]
+    # Reject micro/retail businesses completely
+    junk = ["household", "cleaning", "repair", "maintenance", "retail sale", "kirana", 
+            "grocery", "general store", "dairy", "poultry", "meat", "spices", "sweet", 
+            "bakery", "canteen", "stall", "tailor", "begging", "religious", "utensils", 
+            "cyber", "hardware", "furniture", "readymade garments"]
     
-    if any(junk in desc for junk in junk_keywords) or any(junk in name for junk in junk_keywords):
+    if any(j in desc for j in junk) or any(j in name for j in junk):
         return False
 
-    # PROFITABLE BUSINESSES (High & Medium Ticket)
-    target_keywords = [
-        "hospital", "diagnostic", "nursing home", "pathological", "clinic",
-        "real estate", "builder", "developer", "architect", "construction",
-        "travel agency", "tour", "resort", "hotel",
-        "jeweller", "gold", "diamond",
-        "automobile", "showroom", "university", "institute", "coaching", "school",
-        "garment", "boutique", "apparel", "clothing",
-        "beauty", "salon", "parlour", "spa",
-        "hardware", "furniture", "photography", "event", "gym", "fitness"
-    ]
+    # Keep only High-Ticket / Tech-Hungry niches
+    premium = ["hospital", "nursing home", "diagnostic", "pathological", "clinic",
+               "real estate", "builder", "developer", "architect", "construction of building",
+               "travel agency", "tour operator", "hotel", "resort",
+               "university", "institute", "coaching", "school", "college",
+               "software", "tech", "it service", "startup",
+               "jeweller", "automobile dealer", "car showroom", "logistics"]
     
-    if any(target in desc for target in target_keywords) or any(target in name for target in target_keywords):
+    if any(p in desc for p in premium) or any(p in name for p in premium):
         return True
         
     return False
 
-# --- CONTACT EXTRACTOR ---
-PHONE_RE = re.compile(r"(?:\+91[\-\s]?|0)?[6-9]\d{4}[\s\-]?\d{5}")
-EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+# ================= SCRAPING HELPERS (From User's Script) =================
 
 def clean_phone(p):
     d = re.sub(r"\D", "", p)
@@ -58,108 +56,198 @@ def clean_phone(p):
     if len(d) == 11 and d.startswith("0"): d = d[1:]
     return d if len(d) == 10 and d[0] in "6789" else None
 
-def get_page(driver, url):
+def good_email(e):
+    e = e.lower().strip(".")
+    return None if any(b in e for b in BAD_EMAIL_BITS) else e
+
+def extract_contacts(text):
+    phones = {p for p in (clean_phone(m) for m in PHONE_RE.findall(text)) if p}
+    emails = {e for e in (good_email(m) for m in EMAIL_RE.findall(text)) if e}
+    return phones, emails
+
+def get_page(driver, url, wait=PAGE_WAIT):
     try:
         driver.get(url)
-        time.sleep(3)
+        time.sleep(wait)
         return driver.page_source
     except:
         return ""
 
-def search_contact(driver, name, district):
-    q = f'"{name}" {district} contact phone email'.replace(" ", "+")
-    html = get_page(driver, f"https://www.google.com/search?q={q}&hl=en")
-    
-    phones = {clean_phone(p) for p in PHONE_RE.findall(html) if clean_phone(p)}
-    emails = {e.lower() for e in EMAIL_RE.findall(html) if not any(b in e.lower() for b in ["example", ".png", "google", "wix"])}
-    
+def gmaps_lookup(driver, name, city):
+    q = f"{name} {city}".replace(" ", "+")
+    html = get_page(driver, "https://www.google.com/maps/search/" + q + "?hl=en")
+    if not html: return None, None
+    phones, _ = extract_contacts(html)
+    phone = next(iter(phones)) if phones else None
+    website = None
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if href.startswith("http") and not any(b in href for b in BAD_SITE_BITS):
+                website = href.split("?")[0]
+                break
+    except: pass
+    return phone, website
+
+def gsearch_lookup(driver, name, city):
+    q = f'"{name}" {city} contact phone'.replace(" ", "+")
+    html = get_page(driver, "https://www.google.com/search?q=" + q + "&hl=en&gl=in&num=10", wait=3)
+    if not html or "unusual traffic" in html.lower():
+        return None, None, None, True
+    phones, emails = extract_contacts(html)
+    website = None
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            m = re.search(r"[?&]q=(https?://[^&]+)", href)
+            if m: href = m.group(1)
+            if href.startswith("http") and not any(b in href for b in BAD_SITE_BITS):
+                website = href.split("&")[0].split("?")[0]
+                break
+    except: pass
+    return next(iter(phones), None), next(iter(emails), None), website, False
+
+def bing_lookup(driver, name, city):
+    q = f'"{name}" {city} contact'.replace(" ", "+")
+    html = get_page(driver, "https://www.bing.com/search?q=" + q + "&setmkt=en-IN", wait=3)
+    if not html: return None, None, None
+    phones, emails = extract_contacts(html)
+    website = None
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.select("li.b_algo h2 a[href^='http']"):
+            href = a["href"]
+            if not any(b in href for b in BAD_SITE_BITS) and "bing." not in href:
+                website = href.split("?")[0]
+                break
+    except: pass
+    return next(iter(phones), None), next(iter(emails), None), website
+
+def site_scrape(driver, url):
+    html = get_page(driver, url, wait=3)
+    if not html: return None, None
+    phones, emails = extract_contacts(html)
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if href.startswith("mailto:"):
+                em = good_email(href[7:].split("?")[0])
+                if em: emails.add(em)
+            elif href.startswith("tel:"):
+                ph = clean_phone(href[4:])
+                if ph: phones.add(ph)
+            elif "contact" in href.lower() and not emails:
+                if href.startswith("/"): href = url.rstrip("/") + href
+                if href.startswith("http"):
+                    p2, e2 = extract_contacts(get_page(driver, href, wait=2))
+                    phones |= p2; emails |= e2
+    except: pass
     return next(iter(phones), None), next(iter(emails), None)
 
-# --- MAIN EXECUTION ---
+# ================= MAIN EXECUTION =================
+
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("❌ Error: Missing arguments. Use: python scraper.py <file> <start_row> <limit>")
+    if len(sys.argv) < 2:
+        print("❌ Error: Please provide the CSV filename.")
         sys.exit(1)
         
     input_csv = sys.argv[1]
-    start_row = int(sys.argv[2])
-    limit = int(sys.argv[3])
+    print(f"📂 Loading {input_csv}...")
     
-    print(f"📂 Reading Data from: {input_csv}...")
-    try:
-        df = pd.read_csv(input_csv)
-    except FileNotFoundError:
-        print(f"❌ Error: File '{input_csv}' not found.")
-        sys.exit(1)
+    df = pd.read_csv(input_csv)
+    initial_count = len(df)
     
-    print("🧹 Applying Filter...")
-    df['Is_Target'] = df.apply(lambda x: is_target_lead(x.get('EnterpriseName', ''), x.get('Activities', '')), axis=1)
+    # 1. APPLY DATE FILTER (> MARCH 2026)
+    print("⏳ Applying Date Filter (Only leads after March 2026)...")
+    df['ParsedDate'] = pd.to_datetime(df['RegistrationDate'], format='mixed', dayfirst=True, errors='coerce')
+    target_date = pd.Timestamp('2026-03-31')
+    df = df[df['ParsedDate'] > target_date].copy()
+    print(f"📅 Leads after March 2026: {len(df)} (Dropped {initial_count - len(df)})")
+    
+    # 2. APPLY TECH-POTENTIAL FILTER
+    print("🧹 Applying High-Ticket Tech Filter...")
+    df['Is_Target'] = df.apply(lambda x: is_high_potential_tech_lead(x.get('EnterpriseName'), x.get('Activities')), axis=1)
     filtered_leads = df[df['Is_Target'] == True].copy().reset_index(drop=True)
     
-    total_found = len(filtered_leads)
-    print(f"✅ Total Tech-Ready Leads Found in File: {total_found}")
+    print(f"✅ Final High-Potential Fresh Leads: {len(filtered_leads)}")
     
-    # BATCH SLICING
-    end_row = min(start_row + limit, total_leads_found := total_found)
-    print(f"⏳ Processing batch: Row {start_row} to {end_row-1} (Total {end_row - start_row} leads for this run)")
-    
-    batch_leads = filtered_leads.iloc[start_row:end_row].copy()
-
-    if batch_leads.empty:
-        print("⚠️ No leads left to process in this range.")
+    if filtered_leads.empty:
+        print("⚠️ No leads matched the strict criteria. Exiting.")
         sys.exit(0)
 
-    print("🌐 Setting up Headless Browser...")
+    # 3. START BROWSER & SCRAPE
+    print("🌐 Launching Headless Chromium...")
     opts = Options()
     opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
     opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-    
     driver = webdriver.Chrome(options=opts)
     
-    phones, emails = [], []
-    found_count = 0
+    phones, emails, websites = [], [], []
+    google_blocked = False
     
-    print("\n🚀 STARTING LEAD EXTRACTION (Real-Time Output)...\n")
+    print("\n🚀 STARTING MULTI-LAYER SCRAPING (Maps -> Search -> Bing -> Site)\n")
     
-    for idx, row in batch_leads.iterrows():
-        name = row.get('EnterpriseName', 'Unknown')
-        dist = row.get('District', 'Bihar')
-        print(f"🔎 [Row {idx}] Searching: {name} ...", end=" ")
+    for i, row in filtered_leads.iterrows():
+        name = str(row.get('EnterpriseName', '')).strip()
+        city = str(row.get('District', 'Bihar')).strip()
+        print(f"🔎 [{i+1}/{len(filtered_leads)}] {name} ...", end=" ")
         
+        phone = email = website = None
         try:
-            phone, email = search_contact(driver, name, dist)
-            phones.append(phone)
-            emails.append(email)
+            # Step A: Google Maps
+            p, w = gmaps_lookup(driver, name, city)
+            phone = phone or p; website = website or w
             
-            result_str = ""
-            if phone: result_str += f"📞 {phone} "
-            if email: result_str += f"📧 {email}"
-            
-            if result_str:
-                print(f"✅ {result_str}")
-                found_count += 1
-            else:
-                print("❌ No contact found")
+            # Step B: Google Search
+            if not (phone and email) and not google_blocked:
+                p, e, w, blocked = gsearch_lookup(driver, name, city)
+                if blocked:
+                    google_blocked = True
+                    print("(⚠️ Google Blocked) ", end="")
+                phone = phone or p; email = email or e; website = website or w
                 
-        except Exception:
-            phones.append(None)
-            emails.append(None)
-            print("⚠️ Error searching")
+            # Step C: Bing Fallback
+            if not phone and not email:
+                p, e, w = bing_lookup(driver, name, city)
+                phone = phone or p; email = email or e; website = website or w
+                
+            # Step D: Deep Website Scrape
+            if website and not (phone and email):
+                p, e = site_scrape(driver, website)
+                phone = phone or p; email = email or e
+                
+        except Exception as ex:
+            print(f"error: {str(ex)[:30]}", end=" ")
+            try: driver.quit(); driver = webdriver.Chrome(options=opts)
+            except: pass
             
-        time.sleep(random.uniform(2.5, 4.5)) 
+        phones.append(phone)
+        emails.append(email)
+        websites.append(website)
         
+        found = "".join(x for x, v in [("📞", phone), ("📧", email), ("🌐", website)] if v)
+        print(found if found else "❌")
+        
+        time.sleep(random.uniform(2.0, 4.0)) # Anti-ban delay
+
     driver.quit()
     
-    batch_leads['Mobile_No'] = phones
-    batch_leads['Email'] = emails
+    filtered_leads['Mobile_No'] = phones
+    filtered_leads['Email'] = emails
+    filtered_leads['Website'] = websites
     
-    final_data = batch_leads.dropna(subset=['Mobile_No', 'Email'], how='all')
-    print(f"\n🎉 Extraction Complete for this batch! Valid leads with contacts: {len(final_data)}")
+    final_data = filtered_leads.dropna(subset=['Mobile_No', 'Email', 'Website'], how='all').reset_index(drop=True)
     
-    file_prefix = f"premium_leads_contacts_{start_row}_to_{end_row}"
-    final_data.to_csv(f"{file_prefix}.csv", index=False)
-    final_data.to_excel(f"{file_prefix}.xlsx", index=False)
-    print(f"💾 Saved as {file_prefix}.csv and .xlsx. Ready for download!")
+    print(f"\n🎉 Extraction Complete! Found contact info for {len(final_data)} businesses.")
+    
+    # Save final output
+    final_data.drop(columns=['ParsedDate', 'Is_Target'], inplace=True, errors='ignore')
+    final_data.to_csv("fresh_tech_leads.csv", index=False)
+    final_data.to_excel("fresh_tech_leads.xlsx", index=False)
+    print("💾 Saved as fresh_tech_leads.csv and .xlsx!")
