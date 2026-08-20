@@ -4,9 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       filename:
-        description: 'CSV file ka naam jo repo mein hai (e.g., gaya.csv)'
+        description: 'CSV file ka naam (e.g., gaya.csv)'
         required: true
         default: 'gaya.csv'
+      start_row:
+        description: 'Kahan se start karein? (Pehli baar 0 rakhein)'
+        required: true
+        default: '0'
+      total_leads:
+        description: 'Ek baar mein kitne leads nikalne hain? (Safe limit: 300 - 500)'
+        required: true
+        default: '300'
 
 jobs:
   scrape-leads:
@@ -32,12 +40,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas openpyxl selenium beautifulsoup4
 
-      - name: Run Advanced Filter & Scraper (Live Updates)
-        # Yahan '-u' lagaya hai real-time live terminal output ke liye
-        run: python -u scraper.py ${{ github.event.inputs.filename }}
+      - name: Run Scraper in Batches (Live Updates)
+        run: python -u scraper.py ${{ github.event.inputs.filename }} ${{ github.event.inputs.start_row }} ${{ github.event.inputs.total_leads }}
 
-      - name: Upload Premium Leads Artifact
+      - name: Upload Leads Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Premium_Leads_With_Contacts
+          name: Extracted_Leads_Contacts
           path: premium_leads_contacts.*
