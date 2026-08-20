@@ -7,8 +7,8 @@ import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
-# --- ADVANCED FILTER LOGIC (90%+ CLOSE RATE) ---
-def is_ultra_premium_lead(name, activity_str):
+# --- BROAD & PROFITABLE FILTER LOGIC ---
+def is_target_lead(name, activity_str):
     name = str(name).lower() if pd.notna(name) else ""
     try:
         if pd.isna(activity_str):
@@ -19,28 +19,31 @@ def is_ultra_premium_lead(name, activity_str):
     except:
         desc = str(activity_str).lower()
 
-    # 1. STRICT REJECTION (Low Budget / Micro Businesses)
+    # STRICT JUNK REJECTION
     junk_keywords = [
-        "household", "cleaning", "dusting", "repair", "maintenance", 
+        "household", "cleaning", "dusting", "repair of", "maintenance", 
         "retail sale of food", "cereals", "pulses", "grocery", "general store",
         "kirana", "dairy", "poultry", "meat", "fish", "spices", "sweet", "bakery",
-        "cyber", "cafe", "canteen", "fast food", "stall", "tailor", "begging", 
-        "religious", "pipeline", "hosiery", "utensils"
+        "canteen", "fast food", "stall", "tailor", "begging", 
+        "religious", "pipeline", "utensils", "pan", "bidi"
     ]
-    # FIXED THE TYPO HERE (junk_keywords)
+    
     if any(junk in desc for junk in junk_keywords) or any(junk in name for junk in junk_keywords):
         return False
 
-    # 2. ULTRA-PREMIUM SELECTION (High Ticket Clients Only)
-    premium_keywords = [
-        "hospital", "diagnostic", "nursing home", "multispeciality", "pathological",
+    # PROFITABLE BUSINESSES (High & Medium Ticket)
+    target_keywords = [
+        "hospital", "diagnostic", "nursing home", "pathological", "clinic",
         "real estate", "builder", "developer", "architect", "construction",
-        "travel agency", "tour operator", "resort", "hotel",
+        "travel agency", "tour", "resort", "hotel",
         "jeweller", "gold", "diamond",
-        "automobile dealer", "showroom", "university", "institute", "coaching"
+        "automobile", "showroom", "university", "institute", "coaching", "school",
+        "garment", "boutique", "apparel", "clothing",
+        "beauty", "salon", "parlour", "spa",
+        "hardware", "furniture", "photography", "event", "gym", "fitness"
     ]
     
-    if any(prem in desc for prem in premium_keywords) or any(prem in name for prem in premium_keywords):
+    if any(target in desc for target in target_keywords) or any(target in name for target in target_keywords):
         return True
         
     return False
@@ -74,29 +77,37 @@ def search_contact(driver, name, district):
 
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("❌ Error: CSV filename required.")
+    if len(sys.argv) < 4:
+        print("❌ Error: Missing arguments. Use: python scraper.py <file> <start_row> <limit>")
         sys.exit(1)
         
     input_csv = sys.argv[1]
-    print(f"📂 Reading Data from: {input_csv}...")
+    start_row = int(sys.argv[2])
+    limit = int(sys.argv[3])
     
+    print(f"📂 Reading Data from: {input_csv}...")
     try:
         df = pd.read_csv(input_csv)
     except FileNotFoundError:
-        print(f"❌ Error: File '{input_csv}' not found in the repository.")
+        print(f"❌ Error: File '{input_csv}' not found.")
         sys.exit(1)
     
-    print("🧹 Applying Ultra-Premium Filter...")
-    df['Is_Premium'] = df.apply(lambda x: is_ultra_premium_lead(x.get('EnterpriseName', ''), x.get('Activities', '')), axis=1)
-    premium_leads = df[df['Is_Premium'] == True].copy().reset_index(drop=True)
+    print("🧹 Applying Filter...")
+    df['Is_Target'] = df.apply(lambda x: is_target_lead(x.get('EnterpriseName', ''), x.get('Activities', '')), axis=1)
+    filtered_leads = df[df['Is_Target'] == True].copy().reset_index(drop=True)
     
-    print(f"✅ Out of {len(df)} total leads, found {len(premium_leads)} ULTRA-PREMIUM leads.")
+    total_found = len(filtered_leads)
+    print(f"✅ Total Tech-Ready Leads Found in File: {total_found}")
     
-    max_leads_per_run = 200
-    if len(premium_leads) > max_leads_per_run:
-        print(f"⚠️ Capping at {max_leads_per_run} for this GitHub Actions run to prevent timeout...")
-        premium_leads = premium_leads.head(max_leads_per_run)
+    # BATCH SLICING
+    end_row = min(start_row + limit, total_leads_found := total_found)
+    print(f"⏳ Processing batch: Row {start_row} to {end_row-1} (Total {end_row - start_row} leads for this run)")
+    
+    batch_leads = filtered_leads.iloc[start_row:end_row].copy()
+
+    if batch_leads.empty:
+        print("⚠️ No leads left to process in this range.")
+        sys.exit(0)
 
     print("🌐 Setting up Headless Browser...")
     opts = Options()
@@ -104,8 +115,6 @@ if __name__ == "__main__":
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
-    
-    # Random User Agent to avoid getting blocked
     opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(options=opts)
@@ -115,10 +124,10 @@ if __name__ == "__main__":
     
     print("\n🚀 STARTING LEAD EXTRACTION (Real-Time Output)...\n")
     
-    for idx, row in premium_leads.iterrows():
+    for idx, row in batch_leads.iterrows():
         name = row.get('EnterpriseName', 'Unknown')
         dist = row.get('District', 'Bihar')
-        print(f"🔎 [{idx+1}/{len(premium_leads)}] Searching: {name} ...", end=" ")
+        print(f"🔎 [Row {idx}] Searching: {name} ...", end=" ")
         
         try:
             phone, email = search_contact(driver, name, dist)
@@ -133,23 +142,24 @@ if __name__ == "__main__":
                 print(f"✅ {result_str}")
                 found_count += 1
             else:
-                print("❌ No direct contact found")
+                print("❌ No contact found")
                 
-        except Exception as e:
+        except Exception:
             phones.append(None)
             emails.append(None)
             print("⚠️ Error searching")
             
-        time.sleep(random.uniform(2.5, 4.5)) # Delay to prevent Google block
+        time.sleep(random.uniform(2.5, 4.5)) 
         
     driver.quit()
     
-    premium_leads['Mobile_No'] = phones
-    premium_leads['Email'] = emails
+    batch_leads['Mobile_No'] = phones
+    batch_leads['Email'] = emails
     
-    final_data = premium_leads.dropna(subset=['Mobile_No', 'Email'], how='all')
-    print(f"\n🎉 Extraction Complete! Valid leads with contacts found: {len(final_data)}")
+    final_data = batch_leads.dropna(subset=['Mobile_No', 'Email'], how='all')
+    print(f"\n🎉 Extraction Complete for this batch! Valid leads with contacts: {len(final_data)}")
     
-    final_data.to_csv("premium_leads_contacts.csv", index=False)
-    final_data.to_excel("premium_leads_contacts.xlsx", index=False)
-    print("💾 Saved as premium_leads_contacts.csv and .xlsx. Ready for download!")
+    file_prefix = f"premium_leads_contacts_{start_row}_to_{end_row}"
+    final_data.to_csv(f"{file_prefix}.csv", index=False)
+    final_data.to_excel(f"{file_prefix}.xlsx", index=False)
+    print(f"💾 Saved as {file_prefix}.csv and .xlsx. Ready for download!")
